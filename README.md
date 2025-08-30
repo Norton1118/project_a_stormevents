@@ -1,5 +1,3 @@
-# run from the repo root
-$readme = @'
 # Project A - StormEvents (FastAPI + DuckDB + GeoParquet)
 
 Containerized API to explore NOAA StormEvents stored as GeoParquet.
