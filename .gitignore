@@ -1,0 +1,16 @@
+﻿# ignore raw and derived data
+data/**
+!data/README.md
+
+# env + caches
+.env
+__pycache__/
+*.pyc
+
+# editor junk
+.vscode/
+.idea/
+
+# docker leftovers
+*.pid
+

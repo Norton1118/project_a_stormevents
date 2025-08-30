@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>StormEvents Map</title>
+  <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    :root { --bar-h: 56px; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #map { width:100%; height: calc(100vh - var(--bar-h)); }
+    .bar {
+      height: var(--bar-h);
+      display:flex; align-items:center; gap:10px; padding:8px 10px;
+      border-bottom:1px solid #ddd; background:#fafafa; flex-wrap:wrap;
+    }
+    .legend { display:inline-flex; gap:14px; margin-left:6px; font-size:14px; }
+    .key { display:inline-flex; align-items:center; gap:6px; }
+    .swatch { width:12px; height:12px; border-radius:50%; display:inline-block; }
+    input[type="date"], input[type="number"] { padding:3px 6px; }
+    label { font-size:14px; }
+    button { padding:4px 8px; }
+    #status { font-size:13px; color:#374151 }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <button id="ping">Ping API</button>
+    <span id="status"></span>
+
+    <label>Start <input id="start" type="date" /></label>
+    <label>End <input id="end" type="date" /></label>
+    <label>Limit <input id="limit" type="number" value="50" min="1" max="5000" style="width:72px"></label>
+    <label><input id="useBounds" type="checkbox" /> Use map bounds</label>
+    <button id="reload">Reload</button>
+
+    <span class="legend" title="Counts bucketed by type">
+      <span class="key" data-bucket="Tornado"><span class="swatch" style="background:#e11d48"></span>Tornado <span class="count"></span></span>
+      <span class="key" data-bucket="Hail"><span class="swatch" style="background:#16a34a"></span>Hail <span class="count"></span></span>
+      <span class="key" data-bucket="Flood"><span class="swatch" style="background:#2563eb"></span>Flood <span class="count"></span></span>
+      <span class="key" data-bucket="Wind"><span class="swatch" style="background:#f59e0b"></span>Wind <span class="count"></span></span>
+    </span>
+  </div>
+
+  <div id="map"></div>
+
+  <script>
+    // ==== CONFIG ====
+    const API = "http://localhost:8000";
+
+    // Colors for plotting markers (choose by bucket)
+    const TYPE_COLORS = { Tornado:'#e11d48', Hail:'#16a34a', Flood:'#2563eb', Wind:'#f59e0b' };
+    const defaultColor = '#ef4444';
+
+    // Map raw NOAA types to our 4 legend buckets
+    const BUCKET_FOR = (t) => {
+      switch (t) {
+        case 'Tornado':
+        case 'Waterspout': return 'Tornado';
+
+        case 'Hail':
+        case 'Marine Hail': return 'Hail';
+
+        case 'Flood':
+        case 'Flash Flood':
+        case 'Heavy Rain': return 'Flood';
+
+        case 'Thunderstorm Wind':
+        case 'Marine Thunderstorm Wind':
+        case 'High Wind':
+        case 'Marine High Wind': return 'Wind';
+
+        default: return null; // unbucketed types won’t affect legend
+      }
+    };
+
+    // ==== MAP ====
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',
+      center: [-98.5795, 39.8283],
+      zoom: 4
+    });
+
+    // ---- Ping ----
+    document.getElementById('ping').onclick = async () => {
+      try {
+        const res = await fetch(`${API}/health`);
+        const js = await res.json();
+        document.getElementById('status').textContent = JSON.stringify(js);
+      } catch (e) {
+        document.getElementById('status').textContent = 'Ping failed';
+      }
+    };
+
+    // ---- Legend counts ----
+    function updateLegendCountsFromSummary(summaryItems) {
+      // bucket incoming {key: <raw type>, n: <count>}
+      const bucketCounts = { Tornado:0, Hail:0, Flood:0, Wind:0 };
+      for (const row of summaryItems || []) {
+        const b = BUCKET_FOR(row.key);
+        if (b) bucketCounts[b] += Number(row.n) || 0;
+      }
+      document.querySelectorAll('.legend .key').forEach(el => {
+        const bucket = el.dataset.bucket;
+        const n = bucketCounts[bucket] || 0;
+        const slot = el.querySelector('.count');
+        slot.textContent = n ? `(${n.toLocaleString()})` : '';
+      });
+    }
+
+    // ---- Marker helpers ----
+    let currentMarkers = [];
+    function clearMarkers(){ currentMarkers.forEach(m=>m.remove()); currentMarkers=[]; }
+
+    // ---- UI -> query string ----
+    function buildQuery() {
+      const params = new URLSearchParams();
+      const start = document.getElementById('start').value;
+      const end = document.getElementById('end').value;
+      const limit = document.getElementById('limit').value || '50';
+      if (start) params.set('start', start);
+      if (end) params.set('end', end);
+      params.set('limit', limit);
+
+      if (document.getElementById('useBounds').checked) {
+        const b = map.getBounds();
+        const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+        params.set('bbox', bbox);
+      }
+      return params.toString();
+    }
+
+    async function loadEvents() {
+      try {
+        const qs = buildQuery();
+        const url = `${API}/events?${qs}`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          document.getElementById('status').textContent = `HTTP ${resp.status}`;
+          return;
+        }
+        const data = await resp.json();
+
+        clearMarkers();
+
+        if (!data.items || !data.items.length) {
+          document.getElementById('status').textContent = 'No events';
+          return;
+        }
+
+        const bounds = new maplibregl.LngLatBounds();
+        let plotted = 0;
+
+        data.items.forEach(ev => {
+          if (typeof ev.lon !== 'number' || typeof ev.lat !== 'number') return;
+          const bucket = BUCKET_FOR(ev.type) || 'Tornado'; // default color if unknown
+          const m = new maplibregl.Marker({ color: TYPE_COLORS[bucket] || defaultColor })
+            .setLngLat([ev.lon, ev.lat])
+            .setPopup(new maplibregl.Popup().setHTML(
+              `<b>${ev.type}</b><br>${ev.date}<br>Mag: ${ev.magnitude ?? 'n/a'}`
+            ))
+            .addTo(map);
+          currentMarkers.push(m);
+          bounds.extend([ev.lon, ev.lat]);
+          plotted++;
+        });
+
+        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 40, maxZoom: 8 });
+        document.getElementById('status').textContent = `Plotted ${plotted} events`;
+      } catch (e) {
+        console.error(e);
+        document.getElementById('status').textContent = 'Failed to load events';
+      }
+    }
+
+    async function loadSummary() {
+      try {
+        const params = new URLSearchParams({ groupby: 'type' });
+        const start = document.getElementById('start').value;
+        const end   = document.getElementById('end').value;
+        if (start) params.set('start', start);
+        if (end)   params.set('end', end);
+
+        const res = await fetch(`${API}/events/summary?` + params.toString());
+        if (!res.ok) return;
+        const js = await res.json();
+        updateLegendCountsFromSummary(js.items || []);
+      } catch {}
+    }
+
+    // ---- Defaults for date inputs (optional) ----
+    map.on('load', () => {
+      // set sensible defaults if empty
+      const s = document.getElementById('start');
+      const e = document.getElementById('end');
+      if (!s.value) s.value = '2023-01-01';
+      if (!e.value) e.value = '2023-12-31';
+
+      loadEvents();
+      loadSummary();
+    });
+
+    // ---- Reload button & bounds toggle ----
+    document.getElementById('reload').onclick = () => { loadEvents(); loadSummary(); };
+    document.getElementById('useBounds').onchange = () => { loadEvents(); loadSummary(); };
+  </script>
+</body>
+</html>

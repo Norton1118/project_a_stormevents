@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ./api          # builds from /api (Dockerfile is there)
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env                  # load environment vars
+    volumes:
+      - ./api:/app            # hot-reload code while developing (optional)
+      - ./data:/app/data      # <-- THIS mounts your host data folder
+    command: uvicorn app:app --host 0.0.0.0 --port 8000
