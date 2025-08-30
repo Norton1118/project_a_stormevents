@@ -1,7 +1,7 @@
-Ôªø# Project A ‚Äî StormEvents (FastAPI + DuckDB + GeoParquet)
+# Project A ? StormEvents (FastAPI + DuckDB + GeoParquet)
 
 Containerized API to explore NOAA StormEvents stored as GeoParquet.
-- **ETL:** CSV ‚Üí (Geo)Parquet via Python
+- **ETL:** CSV Å® (Geo)Parquet via Python
 - **Query:** DuckDB in-place over local Parquet
 - **API:** FastAPI with time + bbox filters and a groupby summary
 - **UI:** Minimal MapLibre page to plot events
@@ -18,11 +18,11 @@ docker compose up --build
 http://localhost:8000/docs
 web/index.html  (open in your browser)
 $rootReadme = @'
-# Project A ‚Äî StormEvents (FastAPI + DuckDB + GeoParquet)
+# Project A ? StormEvents (FastAPI + DuckDB + GeoParquet)
 
 Containerized API to explore NOAA StormEvents stored as GeoParquet.
 
-- **ETL:** CSV ‚Üí (Geo)Parquet via Python  
+- **ETL:** CSV Å® (Geo)Parquet via Python  
 - **Query:** DuckDB in-place over local Parquet  
 - **API:** FastAPI with time/bbox filters + summary  
 - **UI:** Minimal MapLibre page to plot events
@@ -35,9 +35,9 @@ Containerized API to explore NOAA StormEvents stored as GeoParquet.
 - Map: open `web/index.html` in your browser
 
 ## Endpoints
-- `GET /health` ‚Üí status + `parquet_dir` + file count  
-- `GET /events?start=&end=&bbox=&limit=` ‚Üí `event_id, type, magnitude, lon, lat, date`  
-- `GET /events/summary?groupby=type&start=&end=&bbox=` ‚Üí `{ key, n }`
+- `GET /health` Å® status + `parquet_dir` + file count  
+- `GET /events?start=&end=&bbox=&limit=` Å® `event_id, type, magnitude, lon, lat, date`  
+- `GET /events/summary?groupby=type&start=&end=&bbox=` Å® `{ key, n }`
 
 ## Data
 Parquet files are ignored by git. See `data/README.md`.  
@@ -52,3 +52,4 @@ Drop screenshots in `assets/` (map, /docs).
 ## Screenshots
 ![Map](assets/map.png)
 ![API docs](assets/docs.png)
+
