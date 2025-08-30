@@ -1,9 +1,10 @@
+# api/app.py
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import os, glob, math, duckdb
 from datetime import date
+import os, glob, math, duckdb
 
 # -----------------------------------------------------------------------------
 # App + CORS
@@ -12,7 +13,7 @@ app = FastAPI(title="StormEvents API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # dev-only; tighten for production
+    allow_origins=["*"],      # dev-only; tighten for prod
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,17 +72,14 @@ def _build_where(start: Optional[str], end: Optional[str], bbox: Optional[str]) 
     return " AND ".join(clauses) if clauses else "1=1"
 
 def _sanitize_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Replace NaN/Inf with None, stringify date/datetime for JSON safety."""
+    """Replace NaN/Inf with None, stringify date for JSON safety."""
     out: List[Dict[str, Any]] = []
     for r in records:
         rr: Dict[str, Any] = {}
         for k, v in r.items():
             if isinstance(v, float):
-                if (not math.isfinite(v)) or math.isnan(v):
-                    rr[k] = None
-                else:
-                    rr[k] = v
-            elif isinstance(v, (date,)):  # date to 'YYYY-MM-DD'
+                rr[k] = v if math.isfinite(v) else None
+            elif isinstance(v, date):
                 rr[k] = v.isoformat()
             else:
                 rr[k] = v
@@ -99,47 +97,65 @@ def health():
 @app.get("/events")
 def events(
     start: Optional[str] = Query(None, description="Start date, YYYY-MM-DD"),
-    end:   Optional[str] = Query(None, description="End date, YYYY-MM-DD"),
-    bbox:  Optional[str] = Query(None, description="minx,miny,maxx,maxy (lon/lat)"),
-    limit: int = Query(100, ge=1, le=10000, description="Max rows to return"),
+    end: Optional[str]   = Query(None, description="End date, YYYY-MM-DD"),
+    bbox: Optional[str]  = Query(None, description="minx,miny,maxx,maxy (lon/lat)"),
+    limit: int           = Query(100, description="Max rows"),
 ):
     _ensure_parquet_present()
-    where = _build_where(start, end, bbox)
-
-    q = f"""
-    SELECT
-        event_id,
-        type,
-        magnitude,
-        lon,
-        lat,
-        date
-    FROM read_parquet('{PARQUET_GLOB}')
-    WHERE {where}
-    ORDER BY date DESC
-    LIMIT {int(limit)}
-    """
 
     con = duckdb.connect()
     try:
-        df = con.sql(q).to_df()
+        query = f"""
+        WITH src AS (
+          SELECT
+            event_id,
+            type,
+            CASE WHEN isfinite(magnitude) THEN magnitude ELSE NULL END AS magnitude,
+            CAST(lon  AS DOUBLE) AS lon,
+            CAST(lat  AS DOUBLE) AS lat,
+            CAST(date AS DATE)   AS date
+          FROM read_parquet('{PARQUET_GLOB}')
+          WHERE isfinite(lon) AND isfinite(lat)
+            AND lon BETWEEN -180 AND 180
+            AND lat BETWEEN -90 AND 90
+        )
+        SELECT * FROM src
+        WHERE 1=1
+        """
+
+        if start:
+            _parse_iso_date(start)
+            query += f" AND date >= DATE '{start}'"
+        if end:
+            _parse_iso_date(end)
+            query += f" AND date <= DATE '{end}'"
+        if bbox:
+            try:
+                minx, miny, maxx, maxy = map(float, bbox.split(","))
+            except Exception:
+                raise HTTPException(status_code=400, detail="bbox must be 'minx,miny,maxx,maxy' (lon/lat)")
+            if minx >= maxx or miny >= maxy:
+                raise HTTPException(status_code=400, detail="bbox min must be < max for both lon and lat")
+            query += f" AND lon BETWEEN {minx} AND {maxx} AND lat BETWEEN {miny} AND {maxy}"
+
+        query += f" ORDER BY date DESC LIMIT {limit};"
+
+        df = con.sql(query).to_df()
     finally:
         con.close()
 
-    records = df.to_dict(orient="records")
-    items = _sanitize_records(records)
-    return {"count": len(items), "items": items}
+    rows = _sanitize_records(df.to_dict(orient="records"))
+    return {"count": len(rows), "items": rows}
 
 @app.get("/events/summary")
 def events_summary(
-    groupby: str = Query("type", description="Column to group by (currently: 'type')"),
+    groupby: str        = Query("type", description="Column to group by (currently: 'type')"),
     start: Optional[str] = Query(None),
     end:   Optional[str] = Query(None),
     bbox:  Optional[str] = Query(None),
 ):
     _ensure_parquet_present()
 
-    # restrict to supported group-bys to avoid SQL injection & weirdness
     allowed = {"type"}
     if groupby not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported groupby '{groupby}'. Allowed: {sorted(allowed)}")
@@ -162,4 +178,3 @@ def events_summary(
 
     items = _sanitize_records(df.to_dict(orient="records"))
     return {"count": len(items), "items": items}
-
