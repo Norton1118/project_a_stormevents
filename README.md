@@ -13,6 +13,7 @@ python etl/noaa_etl.py      # generate parquet to data/parquet/stormevents/
 docker compose up --build   # run API
 # open http://localhost:8000/docs and web/index.html
 
+```
 ## Screenshots
 ![Map](assets/map.png)
 ![API docs](assets/docs.png)
