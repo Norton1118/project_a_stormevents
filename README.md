@@ -49,3 +49,6 @@ Drop screenshots in `assets/` (map, /docs).
 ## Next
 - S3/Glue/Athena wired summary
 - Tests (pytest + httpx), CI
+## Screenshots
+![Map](assets/map.png)
+![API docs](assets/docs.png)
