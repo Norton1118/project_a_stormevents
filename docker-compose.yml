@@ -1,14 +1,30 @@
-version: "3.9"
+# (Optional) You can remove the `version:` line to silence the Compose warning
+# version: "3.9"
 
 services:
   api:
     build:
-      context: ./api          # builds from /api (Dockerfile is there)
+      context: ./api            # builds from /api (your Dockerfile lives here)
     ports:
       - "8000:8000"
+
+    # These env vars are what your FastAPI code will read
+    environment:
+      AWS_PROFILE: stormevents-dev
+      AWS_REGION: us-east-2
+      AWS_DEFAULT_REGION: us-east-2
+      ATHENA_WORKGROUP: primary
+      ATHENA_DATABASE: stormevents
+      ATHENA_TABLE: stormevents_v
+      ATHENA_OUTPUT_S3: s3://stormevents-586639910153-us-east-2/athena-results/
+
+    # Keep your existing .env (these are merged; values above win if duplicated)
     env_file:
-      - .env                  # load environment vars
+      - .env
+
     volumes:
-      - ./api:/app            # hot-reload code while developing (optional)
-      - ./data:/app/data      # <-- THIS mounts your host data folder
+      - ./api:/app              # hot-reload code during dev
+      - ./data:/app/data        # your data folder
+      - "${USERPROFILE}\\.aws:/root/.aws:ro"   # mount your ~/.aws into the container (read-only)
+
     command: uvicorn app:app --host 0.0.0.0 --port 8000
