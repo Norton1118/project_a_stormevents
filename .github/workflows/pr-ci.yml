@@ -24,4 +24,6 @@ jobs:
       - name: Type check
         run: mypy api --ignore-missing-imports
       - name: Tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: pytest -q --maxfail=1
