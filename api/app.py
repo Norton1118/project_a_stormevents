@@ -1,10 +1,10 @@
 # api/app.py
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional, 
-import os 
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,42 +26,41 @@ app.add_middleware(
 # -------------------------------------------------
 # Static hosting (safe)
 # Serve packaged assets from api/static if it exists.
-# This prevents CI/test failures when the folder isn't present.
+# Allow CI/tests to skip via DISABLE_STATIC=1.
 # -------------------------------------------------
 STATIC_DIR: Path = (Path(__file__).parent / "static").resolve()
-if STATIC_DIR.exists():
+if STATIC_DIR.is_dir() and os.getenv("DISABLE_STATIC", "0") != "1":
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
 
 # -------------------------------------------------
 # Helpers
 # -------------------------------------------------
-
-
 def _parse_bbox(bbox: str) -> Tuple[float, float, float, float]:
     """Parse 'minx,miny,maxx,maxy' into floats."""
     parts = bbox.split(",")
     if len(parts) != 4:
-        raise HTTPException(status_code=422, detail="bbox must be 'minx,miny,maxx,maxy'")
+        raise HTTPException(
+            status_code=422, detail="bbox must be 'minx,miny,maxx,maxy'"
+        )
     try:
         mnx, mny, mxx, mxy = (float(p) for p in parts)
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=422, detail="bbox values must be numbers") from exc
+    except ValueError as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=422, detail="bbox values must be numbers"
+        ) from exc
     if mnx >= mxx or mny >= mxy:
         raise HTTPException(status_code=422, detail="bbox must be min<max for x and y")
     return mnx, mny, mxx, mxy
 
 
 def _to_feature_collection(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Convert rows with lon/lat (or geometry WKT) to a GeoJSON FeatureCollection.
-    This is a placeholder; adapt to your schema.
-    """
+    """Convert rows with lon/lat to GeoJSON FeatureCollection (placeholder)."""
     features: List[Dict[str, Any]] = []
     for r in rows:
-        # Expecting keys: longitude, latitude, and properties...
+        geom = None
         if "longitude" in r and "latitude" in r:
             geom = {"type": "Point", "coordinates": [r["longitude"], r["latitude"]]}
-        else:  # pragma: no cover - fallback
-            geom = None
         props = {k: v for k, v in r.items() if k not in {"longitude", "latitude"}}
         features.append({"type": "Feature", "geometry": geom, "properties": props})
     return {"type": "FeatureCollection", "features": features}
@@ -70,8 +69,6 @@ def _to_feature_collection(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 # -------------------------------------------------
 # Routes
 # -------------------------------------------------
-
-
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -81,24 +78,19 @@ def health() -> Dict[str, str]:
 def events(
     start: date = Query(..., description="YYYY-MM-DD"),
     end: date = Query(..., description="YYYY-MM-DD"),
-    bbox: Optional[str] = Query(
-        None, description="minx,miny,maxx,maxy (WGS84 lon/lat order)"
-    ),
+    bbox: Optional[str] = Query(None, description="minx,miny,maxx,maxy (lon/lat)"),
     limit: int = Query(1000, ge=1, le=100_000),
-    types: Optional[List[str]] = Query(
-        default=None, alias="types", description="Optional event types filter"
-    ),
+    types: Optional[List[str]] = Query(default=None, alias="types"),
 ) -> Dict[str, Any]:
-    """Return GeoJSON features for StormEvents filtered by date range, bbox, and type."""
+    """Return GeoJSON features filtered by date/bbox/type."""
     if start > end:
         raise HTTPException(status_code=422, detail="start must be <= end")
-    bbox_tuple: Optional[Tuple[float, float, float, float]] = None
-    if bbox:
-        bbox_tuple = _parse_bbox(bbox)
+    _bbox: Optional[Tuple[float, float, float, float]] = (
+        _parse_bbox(bbox) if bbox else None
+    )
 
-    # TODO: Replace this stub with your Athena/DuckDB query.
-    # rows = query_backend.fetch_events(start, end, bbox_tuple, types, limit)
-    rows: List[Dict[str, Any]] = []  # placeholder so the endpoint is valid
+    # TODO: Replace with Athena/DuckDB query using `_bbox`, `types`, `limit`.
+    rows: List[Dict[str, Any]] = []
 
     return _to_feature_collection(rows)
 
@@ -107,18 +99,17 @@ def events(
 def events_summary(
     start: date = Query(..., description="YYYY-MM-DD"),
     end: date = Query(..., description="YYYY-MM-DD"),
-    groupby: str = Query("type", description="Field to group by (e.g., 'type' or 'state')"),
+    groupby: str = Query("type", description="Group field (e.g., 'type' or 'state')"),
     bbox: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     """Return aggregated counts grouped by a field."""
     if start > end:
         raise HTTPException(status_code=422, detail="start must be <= end")
-    bbox_tuple: Optional[Tuple[float, float, float, float]] = None
-    if bbox:
-        bbox_tuple = _parse_bbox(bbox)
+    _bbox: Optional[Tuple[float, float, float, float]] = (
+        _parse_bbox(bbox) if bbox else None
+    )
 
-    # TODO: Replace this stub with your Athena/DuckDB aggregation.
-    # summary_rows = query_backend.summary(start, end, groupby, bbox_tuple)
-    summary_rows: List[Dict[str, Any]] = []  # placeholder
+    # TODO: Replace with Athena/DuckDB aggregation using `_bbox` and `groupby`.
+    summary_rows: List[Dict[str, Any]] = []
 
     return {"groupby": groupby, "rows": summary_rows}
