@@ -26,4 +26,5 @@ jobs:
       - name: Tests
         env:
           PYTHONPATH: ${{ github.workspace }}
+          DISABLE_STATIC: '1'     # <--- skip static mounting in CI
         run: pytest -q --maxfail=1
