@@ -1,0 +1,15 @@
+﻿name: ADR
+description: Architecture Decision Record
+labels: ["type/ADR","area/docs"]
+body:
+  - type: input
+    id: title
+    attributes: { label: Decision title }
+    validations: { required: true }
+  - type: textarea
+    id: decision
+    attributes: { label: Decision }
+    validations: { required: true }
+  - type: textarea
+    id: consequences
+    attributes: { label: Consequences }

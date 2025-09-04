@@ -1,0 +1,11 @@
+﻿name: Bug
+description: Something isn't working
+labels: ["type/bug", "priority/P1"]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened?, placeholder: Steps to reproduce, expected vs actual }
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes: { label: Acceptance Criteria, placeholder: "- [ ] Repro test\n- [ ] Fix verified" }

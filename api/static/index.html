@@ -23,41 +23,44 @@
     input[type="date"], input[type="number"] { padding:3px 6px; }
     label { font-size:14px; }
     button { padding:4px 8px; }
-    #status { font-size:13px; color:#374151 }
-
-    /* simple, reliable dot markers */
-    .dot {
-      width:10px; height:10px; border-radius:50%;
-      border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25);
-    }
+    #status { font-size:13px; color:#374151; margin-left:6px; }
+    .sep { width:1px; height:18px; background:#ddd; margin:0 6px; }
   </style>
 </head>
 <body>
   <div class="bar">
     <button id="ping">Ping API</button>
     <span id="status"></span>
+    <div class="sep"></div>
 
     <label>Start <input id="start" type="date" /></label>
     <label>End <input id="end" type="date" /></label>
-    <label>Limit <input id="limit" type="number" value="50" min="1" max="5000" style="width:72px"></label>
+    <label>Limit <input id="limit" type="number" value="500" min="1" max="5000" style="width:72px"></label>
     <label><input id="useBounds" type="checkbox" /> Use map bounds</label>
+    <label><input id="autoReload" type="checkbox" checked /> Auto reload on move</label>
     <button id="reload">Reload</button>
+    <button id="download">Download CSV</button>
 
-    <span class="legend" title="Counts bucketed by type">
-      <span class="key" data-bucket="Tornado"><span class="swatch" style="background:#e11d48"></span>Tornado <span class="count"></span></span>
-      <span class="key" data-bucket="Hail"><span class="swatch" style="background:#16a34a"></span>Hail <span class="count"></span></span>
-      <span class="key" data-bucket="Flood"><span class="swatch" style="background:#2563eb"></span>Flood <span class="count"></span></span>
-      <span class="key" data-bucket="Wind"><span class="swatch" style="background:#f59e0b"></span>Wind <span class="count"></span></span>
-    </span>
+    <div class="sep"></div>
+
+    <!-- Type filters -->
+    <label><input class="flt" type="checkbox" data-bucket="Tornado" checked />
+      <span class="swatch" style="background:#e11d48"></span> Tornado</label>
+    <label><input class="flt" type="checkbox" data-bucket="Hail" checked />
+      <span class="swatch" style="background:#16a34a"></span> Hail</label>
+    <label><input class="flt" type="checkbox" data-bucket="Flood" checked />
+      <span class="swatch" style="background:#2563eb"></span> Flood</label>
+    <label><input class="flt" type="checkbox" data-bucket="Wind" checked />
+      <span class="swatch" style="background:#f59e0b"></span> Wind</label>
   </div>
 
   <div id="map"></div>
 
   <script>
     // ==== CONFIG ====
-    const API = "http://localhost:8000";
+    // When served by FastAPI StaticFiles, same-origin requests work, so base is "".
+    const API = "";
 
-    // Colors for plotting markers (by bucket)
     const TYPE_COLORS = { Tornado:'#e11d48', Hail:'#16a34a', Flood:'#2563eb', Wind:'#f59e0b' };
     const defaultColor = '#ef4444';
 
@@ -94,38 +97,25 @@
     // ---- Ping ----
     document.getElementById('ping').onclick = async () => {
       try {
+        const t0 = performance.now();
         const res = await fetch(`${API}/health`);
         const js = await res.json();
-        document.getElementById('status').textContent = JSON.stringify(js);
-      } catch (e) {
+        const ms = Math.round(performance.now() - t0);
+        document.getElementById('status').textContent = `Health OK in ${ms} ms → ${JSON.stringify(js)}`;
+      } catch {
         document.getElementById('status').textContent = 'Ping failed';
       }
     };
 
-    // ---- Legend counts ----
-    function updateLegendCountsFromSummary(summaryItems) {
-      const bucketCounts = { Tornado:0, Hail:0, Flood:0, Wind:0 };
-      for (const row of summaryItems || []) {
-        const b = BUCKET_FOR(row.key);
-        if (b) bucketCounts[b] += Number(row.n) || 0;
-      }
-      document.querySelectorAll('.legend .key').forEach(el => {
-        const bucket = el.dataset.bucket;
-        const n = bucketCounts[bucket] || 0;
-        el.querySelector('.count').textContent = n ? `(${n.toLocaleString()})` : '';
-      });
-    }
+    // ---- helpers ----
+    const debounce = (fn, ms=400) => {
+      let t; return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
+    };
 
-    // ---- Marker helpers ----
-    let currentMarkers = [];
-    function clearMarkers(){ currentMarkers.forEach(m=>m.remove()); currentMarkers=[]; }
-
-    // build tiny colored DOM dots (more reliable than Marker {color:...} on some browsers)
-    function makeDot(color) {
-      const el = document.createElement('div');
-      el.className = 'dot';
-      el.style.background = color || defaultColor;
-      return el;
+    function selectedBuckets() {
+      const set = new Set();
+      document.querySelectorAll('.flt').forEach(cb => { if (cb.checked) set.add(cb.dataset.bucket); });
+      return set;
     }
 
     // ---- UI -> query string ----
@@ -133,7 +123,7 @@
       const params = new URLSearchParams();
       const start = document.getElementById('start').value;
       const end = document.getElementById('end').value;
-      const limit = document.getElementById('limit').value || '50';
+      const limit = document.getElementById('limit').value || '500';
       if (start) params.set('start', start);
       if (end) params.set('end', end);
       params.set('limit', limit);
@@ -146,38 +136,50 @@
       return params.toString();
     }
 
+    let lastGeojson = { type:'FeatureCollection', features: [] };
+
     async function loadEvents() {
+      const t0 = performance.now();
       const qs = buildQuery();
       const url = `${API}/events?${qs}`;
       console.log('[loadEvents] GET', url);
       const resp = await fetch(url);
-      if (!resp.ok) { document.getElementById('status').textContent = `HTTP ${resp.status}`; return; }
+      if (!resp.ok) {
+        document.getElementById('status').textContent = `HTTP ${resp.status}`;
+        return;
+      }
       const data = await resp.json();
       const items = data.items || [];
 
-      // Build GeoJSON
+      // Filter by bucket selection and build GeoJSON
+      const allow = selectedBuckets();
       const features = items
         .filter(ev => Number.isFinite(+ev.lon) && Number.isFinite(+ev.lat))
-        .map(ev => ({
-          type: 'Feature',
-          properties: {
-            type: ev.type,
-            bucket: BUCKET_FOR(ev.type) || 'Wind'
-          },
-          geometry: { type: 'Point', coordinates: [+ev.lon, +ev.lat] }
-        }));
+        .map(ev => {
+          const bucket = BUCKET_FOR(ev.type) || 'Wind';
+          return {
+            type: 'Feature',
+            properties: {
+              type: ev.type,
+              bucket,
+              date: ev.date || '',
+              magnitude: ev.magnitude == null ? '' : ev.magnitude
+            },
+            geometry: { type: 'Point', coordinates: [+ev.lon, +ev.lat] }
+          };
+        })
+        .filter(f => allow.has(f.properties.bucket));
 
-      const geo = { type: 'FeatureCollection', features };
+      lastGeojson = { type: 'FeatureCollection', features };
 
-      // Remove old source/layers if they exist
+      // Replace source/layers
       const layers = ['se-unclustered', 'se-clusters', 'se-cluster-count'];
       layers.forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
       if (map.getSource('se')) map.removeSource('se');
 
-      // Add clustered source
       map.addSource('se', {
         type: 'geojson',
-        data: geo,
+        data: lastGeojson,
         cluster: true,
         clusterRadius: 40,
         clusterMaxZoom: 10
@@ -204,7 +206,7 @@
         }
       });
 
-      // Clusters
+      // Cluster bubbles
       map.addLayer({
         id: 'se-clusters',
         type: 'circle',
@@ -226,7 +228,7 @@
         }
       });
 
-      // Cluster count labels
+      // Cluster counts
       map.addLayer({
         id: 'se-cluster-count',
         type: 'symbol',
@@ -239,12 +241,38 @@
         paint: { 'text-color': '#0f172a' }
       });
 
+      // Interactions
+      map.on('click', 'se-clusters', (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        map.getSource('se').getClusterExpansionZoom(
+          f.properties.cluster_id,
+          (err, zoom) => {
+            if (err) return;
+            map.easeTo({ center: f.geometry.coordinates, zoom });
+          }
+        );
+      });
+      map.on('mouseenter', 'se-clusters', () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', 'se-clusters', () => map.getCanvas().style.cursor = '');
+
+      map.on('click', 'se-unclustered', (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        const p = f.properties;
+        new maplibregl.Popup({ offset: 10 })
+          .setLngLat(f.geometry.coordinates)
+          .setHTML(`<b>${p.type}</b><br>${p.date || ''}${p.magnitude ? `<br>Mag: ${p.magnitude}`:''}`)
+          .addTo(map);
+      });
+
       // Fit bounds
       const b = new maplibregl.LngLatBounds();
       features.forEach(f => b.extend(f.geometry.coordinates));
       if (!b.isEmpty()) map.fitBounds(b, { padding: 40, maxZoom: 6 });
 
-      document.getElementById('status').textContent = `Plotted ${features.length} events (clustered)`;
+      const ms = Math.round(performance.now() - t0);
+      document.getElementById('status').textContent = `Plotted ${features.length} events (clustered) in ${ms} ms`;
       console.log('[loadEvents] plotted:', features.length);
     }
 
@@ -255,42 +283,76 @@
         const end   = document.getElementById('end').value;
         if (start) params.set('start', start);
         if (end)   params.set('end', end);
-
         const res = await fetch(`${API}/events/summary?` + params.toString());
         if (!res.ok) return;
         const js = await res.json();
-        updateLegendCountsFromSummary(js.items || []);
-      } catch (e) {}
+        // Write counts into the label text (small UI sugar)
+        const counts = Object.fromEntries((js.items||[]).map(r => [r.key, r.n]));
+        document.querySelectorAll('.flt').forEach(cb => {
+          const bucket = cb.dataset.bucket;
+          const label = cb.parentElement;
+          const n = counts[bucket] || 0;
+          label.title = `${bucket}: ${n.toLocaleString()}`;
+        });
+      } catch {}
     }
 
-    // ---- Defaults for date inputs ----
+    // ---- Download CSV of current query (unfiltered by checkboxes on the client) ----
+    document.getElementById('download').onclick = async () => {
+      const qs = buildQuery();
+      const url = `${API}/events?${qs}`;
+      const res = await fetch(url);
+      const js  = await res.json();
+      const items = js.items || [];
+      const cols = ['event_id','type','magnitude','lon','lat','date'];
+      const csv  = [cols.join(',')]
+        .concat(items.map(r => cols.map(k => {
+          const v = r[k] == null ? '' : r[k];
+          // simple CSV escaping
+          return /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+        }).join(',')))
+        .join('\n');
+      const blob = new Blob([csv], {type:'text/csv'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'stormevents.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+
+    // ---- Defaults & wiring ----
     map.on('load', () => {
       const s = document.getElementById('start');
       const e = document.getElementById('end');
       if (!s.value) s.value = '2023-01-01';
       if (!e.value) e.value = '2023-12-31';
-
       loadEvents();
       loadSummary();
     });
 
-    // ---- Buttons ----
-    document.getElementById('reload').onclick = () => { loadEvents(); loadSummary(); };
-    document.getElementById('useBounds').onchange = () => { loadEvents(); loadSummary(); };
+    const reloadAll = () => { loadEvents(); loadSummary(); };
+    const reloadDebounced = debounce(reloadAll, 450);
 
-    // Small debug helper you can call from DevTools if needed:
-    window._debugOnce = async () => {
-      const r = await fetch(`${API}/events?limit=5`);
-      const d = await r.json();
-      console.table((d.items||[]).map(i => ({ type:i.type, lon:+i.lon, lat:+i.lat })));
-      clearMarkers();
-      for (const i of d.items||[]) {
-        if (!Number.isFinite(+i.lon) || !Number.isFinite(+i.lat)) continue;
-        new maplibregl.Marker({ element: makeDot('#e11d48') })
-          .setLngLat([+i.lon, +i.lat])
-          .addTo(map);
+    document.getElementById('reload').onclick = reloadAll;
+    document.getElementById('useBounds').onchange = reloadAll;
+    document.querySelectorAll('.flt').forEach(cb => cb.onchange = () => {
+      // re-apply client filter without a network call when possible
+      const allow = selectedBuckets();
+      if (map.getSource('se')) {
+        const filtered = {
+          type: 'FeatureCollection',
+          features: (lastGeojson.features||[]).filter(f => allow.has(f.properties.bucket))
+        };
+        map.getSource('se').setData(filtered);
       }
-    };
+    });
+
+    map.on('moveend', () => {
+      if (document.getElementById('useBounds').checked &&
+          document.getElementById('autoReload').checked) {
+        reloadDebounced();
+      }
+    });
   </script>
 </body>
 </html>
