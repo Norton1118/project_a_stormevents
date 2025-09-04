@@ -1,21 +1,30 @@
 ﻿name: CI
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
   pull_request: {}
 jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
+      - name: Debug: show file headers
+        run: |
+          echo "=== api/app.py ==="; sed -n "1,20p" api/app.py || true
+          echo "=== etl/noaa_etl.py ==="; sed -n "1,20p" etl/noaa_etl.py || true
       - name: Install deps
         run: |
           python -m pip install -U pip
           pip install fastapi uvicorn pydantic boto3 httpx pytest pytest-cov mypy ruff black
       - name: Lint & Format
         run: |
-          ruff check .
+          ruff check . --fix
           black --check .
       - name: Type check
         run: mypy api --ignore-missing-imports
