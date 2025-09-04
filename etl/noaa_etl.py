@@ -1,10 +1,12 @@
 # etl/noaa_etl.py
+from pathlib import Path
 import re
 import gzip
 import shutil
 import requests
 import pandas as pd
-from pathlib import Path
+
+# (no 'os' — Ruff says it's unused)
 
 BASE_URL = "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles"
 YEARS = [2023]  # add more e.g. [2021, 2022, 2023, 2024]
