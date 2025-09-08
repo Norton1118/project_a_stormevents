@@ -1,4 +1,8 @@
-﻿import os, sys, time, boto3
+﻿import os
+import sys
+import time
+import boto3
+
 
 def run_athena(sql_path: str, database: str = "stormevents") -> None:
     region = os.getenv("AWS_REGION", "us-east-2")
@@ -26,6 +30,7 @@ def run_athena(sql_path: str, database: str = "stormevents") -> None:
                 print("Reason:", reason)
             break
         time.sleep(2)
+
 
 if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else "infra/sql/athena_create_table.sql"
