@@ -6,6 +6,7 @@ import pyarrow.parquet as pq
 PARQUET_DIR = os.environ.get("PARQUET_DIR", "./data/parquet")
 os.makedirs(PARQUET_DIR, exist_ok=True)
 
+
 def main():
     # Placeholder small dataset — replace with NOAA StormEvents pipeline
     df = pd.DataFrame(
@@ -22,6 +23,7 @@ def main():
     out = os.path.join(PARQUET_DIR, "stormevents_sample.parquet")
     pq.write_table(table, out)
     print(f"Wrote {out}")
+
 
 if __name__ == "__main__":
     main()

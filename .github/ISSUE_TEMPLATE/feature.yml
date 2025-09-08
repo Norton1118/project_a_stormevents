@@ -1,0 +1,18 @@
+﻿name: Feature
+description: New capability or enhancement
+labels: ["type/feature"]
+body:
+  - type: input
+    id: title
+    attributes: { label: Short title }
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes: { label: Acceptance Criteria, placeholder: "- [ ] ..." }
+    validations: { required: true }
+  - type: dropdown
+    id: area
+    attributes: { label: Area, options: [area/backend, area/frontend, area/infrastructure, area/testing, area/security, area/docs, area/ci, area/devx] }
+  - type: dropdown
+    id: size
+    attributes: { label: Size, options: [size/S, size/M, size/L] }
