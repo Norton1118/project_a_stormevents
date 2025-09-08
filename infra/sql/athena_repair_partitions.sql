@@ -1,1 +1,1 @@
-﻿MSCK REPAIR TABLE stormevents.events_parquet;
+MSCK REPAIR TABLE stormevents.events_parquet;
