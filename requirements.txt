@@ -1,2 +1,6 @@
 
 boto3
+structlog
+starlette-exporter
+structlog
+starlette-exporter
